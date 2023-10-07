@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"io/fs"
 	"net/http"
 	"os"
 )
@@ -36,32 +34,45 @@ type nodeData struct {
 type handler interface {
 	persistLogs() echo.HandlerFunc
 	persistSingleLog() echo.HandlerFunc
-	getFile() *os.File
+	getLogFile() *os.File
+	getLocalStorageLogFile() *os.File
 }
 
 type Handler struct {
-	File *os.File
+	LogFile             *os.File
+	LocalStorageLogFile *os.File
 }
 
 func initHandler() handler {
-	file, err := os.OpenFile("logs.jsonl", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	logFile, err := os.OpenFile("logs.jsonl", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
+
+	localStorageLogFile, err := os.OpenFile("localStorageLogs.jsonl", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
 
 	return Handler{
-		File: file,
+		LogFile:             logFile,
+		LocalStorageLogFile: localStorageLogFile,
 	}
 }
 
 func main() {
 	h := initHandler()
 	defer func(file *os.File) {
-		fmt.Print("Closing file")
 		if err := file.Close(); err != nil {
 			panic(err)
 		}
-	}(h.getFile())
+	}(h.getLogFile())
+
+	defer func(file *os.File) {
+		if err := file.Close(); err != nil {
+			panic(err)
+		}
+	}(h.getLocalStorageLogFile())
 
 	e := echo.New()
 
@@ -108,12 +119,7 @@ func (h Handler) persistLogs() echo.HandlerFunc {
 			c.Logger().Error(err)
 		}
 
-		bytes, err := json.Marshal(body)
-		if err != nil {
-			c.Logger().Error(err)
-		}
-
-		if err := os.WriteFile("logs.jsonl", bytes, fs.ModePerm); err != nil {
+		if err := h.AppendLogsToLocalStorageLogFile(body.Logs); err != nil {
 			c.Logger().Error(err)
 		}
 
@@ -121,8 +127,12 @@ func (h Handler) persistLogs() echo.HandlerFunc {
 	}
 }
 
-func (h Handler) getFile() *os.File {
-	return h.File
+func (h Handler) getLogFile() *os.File {
+	return h.LogFile
+}
+
+func (h Handler) getLocalStorageLogFile() *os.File {
+	return h.LocalStorageLogFile
 }
 
 func (h Handler) AppendLog(l log) error {
@@ -131,11 +141,28 @@ func (h Handler) AppendLog(l log) error {
 		return err
 	}
 
-	if _, err := h.File.Write(bytes); err != nil {
+	if _, err := h.LogFile.Write(bytes); err != nil {
 		return err
 	}
 
-	if _, err := h.File.WriteString("\n"); err != nil {
+	if _, err := h.LogFile.WriteString("\n"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (h Handler) AppendLogsToLocalStorageLogFile(logs []log) error {
+	bytes, err := json.Marshal(logs)
+	if err != nil {
+		return err
+	}
+
+	if _, err := h.LocalStorageLogFile.Write(bytes); err != nil {
+		return err
+	}
+
+	if _, err := h.LocalStorageLogFile.WriteString("\n"); err != nil {
 		return err
 	}
 

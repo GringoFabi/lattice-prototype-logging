@@ -2,34 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"lattice-logging/pkg/analyze"
 	"net/http"
 	"os"
 )
-
-type logsRequest struct {
-	Logs []log `json:"logs"`
-}
-
-type singleLogRequest struct {
-	Log log `json:"log"`
-}
-
-type log struct {
-	Action   string   `json:"action"`
-	NodeData nodeData `json:"node"`
-	Time     int      `json:"time"`
-}
-
-type nodeData struct {
-	Node      int        `json:"node"`
-	Position  []float64  `json:"position"`
-	Edges     [][]string `json:"edges"`
-	Toplabel  []string   `json:"toplabel"`
-	Botlabel  []string   `json:"botlabel"`
-	Valuation string
-}
 
 type handler interface {
 	persistLogs() echo.HandlerFunc
@@ -60,7 +39,33 @@ func initHandler() handler {
 	}
 }
 
+func getRunMode() string {
+	if mode, ok := os.LookupEnv("MODE"); !ok {
+		return "server"
+	} else {
+		return mode
+	}
+}
+
 func main() {
+	mode := getRunMode()
+	switch mode {
+	case "server":
+		runServer()
+	case "analyze":
+		count1 := analyze.ReadJson("localStorage.json")
+		count2 := analyze.ReadJsonLines("logs.jsonl")
+		count3 := analyze.ReadJsonLinesArray("localStorageLogs.jsonl")
+		zip := analyze.Zip(count1, count2, count3)
+
+		fmt.Printf("\nAction,Count\n")
+		for action, count := range zip {
+			fmt.Printf("%s,%d\n", action, count)
+		}
+	}
+}
+
+func runServer() {
 	h := initHandler()
 	defer func(file *os.File) {
 		if err := file.Close(); err != nil {
@@ -96,7 +101,7 @@ func main() {
 
 func (h Handler) persistSingleLog() echo.HandlerFunc {
 	return func(c echo.Context) error {
-		body := new(singleLogRequest)
+		body := new(analyze.SingleLogRequest)
 
 		if err := c.Bind(body); err != nil {
 			c.Logger().Error(err)
@@ -112,7 +117,7 @@ func (h Handler) persistSingleLog() echo.HandlerFunc {
 
 func (h Handler) persistLogs() echo.HandlerFunc {
 	return func(c echo.Context) error {
-		body := new(logsRequest)
+		body := new(analyze.LogsRequest)
 
 		err := c.Bind(body)
 		if err != nil {
@@ -135,7 +140,7 @@ func (h Handler) getLocalStorageLogFile() *os.File {
 	return h.LocalStorageLogFile
 }
 
-func (h Handler) AppendLog(l log) error {
+func (h Handler) AppendLog(l analyze.Log) error {
 	bytes, err := json.Marshal(l)
 	if err != nil {
 		return err
@@ -152,7 +157,7 @@ func (h Handler) AppendLog(l log) error {
 	return nil
 }
 
-func (h Handler) AppendLogsToLocalStorageLogFile(logs []log) error {
+func (h Handler) AppendLogsToLocalStorageLogFile(logs []analyze.Log) error {
 	bytes, err := json.Marshal(logs)
 	if err != nil {
 		return err
